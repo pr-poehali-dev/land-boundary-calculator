@@ -47,32 +47,38 @@ const Index = () => {
 
     setLoading(true);
 
-    setTimeout(() => {
-      const mockArea = Math.floor(Math.random() * 15000) + 500;
-      const costs = calculateCost(mockArea);
+    try {
+      const response = await fetch(
+        `https://functions.poehali.dev/ffc8888c-5111-4a00-ad6c-009f2e3417b3?cadastralNumber=${encodeURIComponent(cadastralNumber)}`
+      );
       
-      const mockData: PlotData = {
-        cadastralNumber,
-        address: 'Московская область, Раменский район, д. Заболотье',
-        area: mockArea,
-        category: 'Земли населённых пунктов',
-        ...costs,
-        coordinates: [
-          [55.7558, 37.6173],
-          [55.7558, 37.6193],
-          [55.7548, 37.6193],
-          [55.7548, 37.6173],
-        ],
-      };
+      const data = await response.json();
+      
+      if (!response.ok) {
+        toast({
+          title: data.error || 'Ошибка',
+          description: data.message || 'Не удалось получить данные об участке',
+          variant: 'destructive',
+        });
+        setLoading(false);
+        return;
+      }
 
-      setPlotData(mockData);
+      setPlotData(data);
       setLoading(false);
       
       toast({
         title: 'Данные получены',
-        description: 'Информация о участке успешно загружена',
+        description: 'Информация из NSPD успешно загружена',
       });
-    }, 1500);
+    } catch (error) {
+      toast({
+        title: 'Ошибка сети',
+        description: 'Не удалось подключиться к серверу. Проверьте интернет-соединение.',
+        variant: 'destructive',
+      });
+      setLoading(false);
+    }
   };
 
   return (
@@ -239,11 +245,11 @@ const Index = () => {
                     </div>
                   </div>
                 </div>
-                <div className="mt-4 p-4 bg-yellow-50 rounded-lg flex items-start gap-3">
-                  <Icon name="AlertCircle" size={20} className="text-yellow-600 mt-0.5" />
+                <div className="mt-4 p-4 bg-green-50 rounded-lg flex items-start gap-3">
+                  <Icon name="CheckCircle2" size={20} className="text-green-600 mt-0.5" />
                   <p className="text-sm text-gray-700">
-                    Для интеграции с API NSPD и отображения реальных данных кадастра, требуется подключение к официальному API Росреестра.
-                    Сейчас отображаются демонстрационные данные.
+                    Данные загружены из Национальной системы пространственных данных (NSPD).
+                    Информация является актуальной на текущий момент.
                   </p>
                 </div>
               </CardContent>

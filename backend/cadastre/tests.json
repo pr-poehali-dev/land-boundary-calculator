@@ -1,0 +1,32 @@
+{
+  "tests": [
+    {
+      "name": "Get cadastral data success",
+      "method": "GET",
+      "path": "/?cadastralNumber=77:09:0005004:1234",
+      "expectedStatus": 200,
+      "expectedBody": {
+        "cadastralNumber": "string",
+        "area": "number",
+        "totalCost": "number"
+      },
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Missing cadastralNumber parameter",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 400,
+      "expectedBody": {
+        "error": "string"
+      },
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "OPTIONS CORS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    }
+  ]
+}
