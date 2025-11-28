@@ -1,11 +1,12 @@
 import json
 import urllib.request
+import urllib.parse
 import urllib.error
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     '''
-    Business: Get cadastral plot data from NSPD API
+    Business: Get cadastral plot data from NSPD API directly
     Args: event with httpMethod, queryStringParameters (cadastralNumber)
           context with request_id attribute
     Returns: HTTP response with plot data or error
@@ -47,31 +48,18 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             'body': json.dumps({'error': 'cadastralNumber parameter is required'})
         }
     
-    cleaned_number = cadastral_number.replace(':', ':')
-    nspd_url = f'https://nspd.gov.ru/api/geoportal/v2/search/geoportal?thematicSearchId=1&query={cleaned_number}'
-    
     try:
-        req = urllib.request.Request(nspd_url)
-        req.add_header('User-Agent', 'Mozilla/5.0')
+        encoded_cn = urllib.parse.quote(cadastral_number)
+        url = f'https://pkk.rosreestr.ru/api/features/1/{encoded_cn}'
         
-        with urllib.request.urlopen(req, timeout=10) as response:
+        req = urllib.request.Request(url)
+        req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+        req.add_header('Referer', 'https://pkk.rosreestr.ru/')
+        
+        with urllib.request.urlopen(req, timeout=15) as response:
             data = json.loads(response.read().decode('utf-8'))
             
-            if not data.get('data') or not data['data'].get('features'):
-                return {
-                    'statusCode': 404,
-                    'headers': {
-                        'Content-Type': 'application/json',
-                        'Access-Control-Allow-Origin': '*'
-                    },
-                    'body': json.dumps({
-                        'error': 'Участок не найден в НСПД',
-                        'message': 'Возможно, объект снят с учета или указан неверный кадастровый номер'
-                    })
-                }
-            
-            features = data['data']['features']
-            if not features:
+            if not data or data.get('error'):
                 return {
                     'statusCode': 404,
                     'headers': {
@@ -80,40 +68,54 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     },
                     'body': json.dumps({
                         'error': 'Участок не найден',
-                        'message': 'По данному кадастровому номеру объекты не найдены'
+                        'message': 'По данному кадастровому номеру объекты не найдены в базе Росреестра'
                     })
                 }
             
-            feature = features[0]
-            properties = feature.get('properties', {})
-            geometry = feature.get('geometry', {})
+            feature = data.get('feature', {})
+            attrs = feature.get('attrs', {})
+            
+            area_value = 0
+            if 'area_value' in attrs:
+                try:
+                    area_value = float(str(attrs['area_value']).replace(',', '.'))
+                except:
+                    area_value = 0
+            
+            points_count = max(4, int(area_value / 200) + 4) if area_value > 0 else 4
+            cost_per_point = 3500 if area_value > 10000 else (4000 if area_value > 5000 else 4500)
+            total_cost = points_count * cost_per_point
             
             coordinates = []
-            if geometry.get('type') == 'Polygon' and geometry.get('coordinates'):
-                coords_array = geometry['coordinates'][0]
-                coordinates = [[round(c[1], 6), round(c[0], 6)] for c in coords_array[:4]]
+            extent = feature.get('extent', {})
+            if extent:
+                min_x = extent.get('xmin', 0)
+                min_y = extent.get('ymin', 0)
+                max_x = extent.get('xmax', 0)
+                max_y = extent.get('ymax', 0)
+                
+                if min_x and min_y and max_x and max_y:
+                    coordinates = [
+                        [round(min_y, 6), round(min_x, 6)],
+                        [round(max_y, 6), round(min_x, 6)],
+                        [round(max_y, 6), round(max_x, 6)],
+                        [round(min_y, 6), round(max_x, 6)]
+                    ]
             
-            area = properties.get('area', 0)
-            if isinstance(area, str):
-                try:
-                    area = float(area.replace(',', '.'))
-                except:
-                    area = 0
-            
-            points_count = max(4, int(area / 200) + 4) if area > 0 else 4
-            cost_per_point = 3500 if area > 10000 else (4000 if area > 5000 else 4500)
-            total_cost = points_count * cost_per_point
+            address = attrs.get('address', 'Адрес не указан')
+            if not address or address == 'None':
+                address = f"Местоположение установлено относительно ориентира: {attrs.get('util_by_doc', 'Не указано')}"
             
             result = {
                 'cadastralNumber': cadastral_number,
-                'address': properties.get('address', 'Адрес не указан'),
-                'area': round(area, 2),
-                'category': properties.get('category', 'Не указана'),
+                'address': address,
+                'area': round(area_value, 2),
+                'category': attrs.get('category_type', 'Не указана'),
                 'costPerPoint': cost_per_point,
                 'pointsCount': points_count,
                 'totalCost': total_cost,
                 'coordinates': coordinates,
-                'source': 'NSPD'
+                'source': 'Росреестр ПКК'
             }
             
             return {
@@ -126,6 +128,18 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             }
             
     except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return {
+                'statusCode': 404,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps({
+                    'error': 'Участок не найден',
+                    'message': 'Участок с таким кадастровым номером не найден в базе Росреестра'
+                })
+            }
         return {
             'statusCode': e.code,
             'headers': {
@@ -133,7 +147,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'Access-Control-Allow-Origin': '*'
             },
             'body': json.dumps({
-                'error': 'Ошибка API NSPD',
+                'error': 'Ошибка API Росреестра',
                 'message': f'Код ошибки: {e.code}'
             })
         }
@@ -146,7 +160,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             },
             'body': json.dumps({
                 'error': 'Сервис временно недоступен',
-                'message': 'Не удалось подключиться к API NSPD'
+                'message': 'Не удалось подключиться к API Росреестра'
             })
         }
     except Exception as e:
@@ -157,7 +171,7 @@ def handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'Access-Control-Allow-Origin': '*'
             },
             'body': json.dumps({
-                'error': 'Внутренняя ошибка сервера',
+                'error': 'Ошибка получения данных',
                 'message': str(e)
             })
         }
